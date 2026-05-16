@@ -2635,7 +2635,11 @@ window.fireUploadMachine = async function(e) {
 
       info.innerHTML = `<span style="color:var(--amber)">\u23f3 \u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01 ${mappedRows.length.toLocaleString()} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23...</span>`;
 
-      const written = await saveRowsToFirestore('machine_data', mappedRows, 'cust');
+      // Save to 'shops' (loaded on startup) AND 'machine_data' (backup)
+      const written = await saveRowsToFirestore('shops', mappedRows, 'cust');
+      await saveRowsToFirestore('machine_data', mappedRows, 'cust');
+      // Also save to main_data (used for summary view)
+      await saveRowsToFirestore('main_data', mappedRows, 'cust');
       boNotif('\u2705 DB.xlsx: \u0e2d\u0e31\u0e1e\u0e42\u0e2b\u0e25\u0e14 ' + written.toLocaleString() + ' \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 \u2014 \u0e17\u0e38\u0e01\u0e04\u0e19\u0e40\u0e2b\u0e47\u0e19\u0e17\u0e31\u0e19\u0e17\u0e35!', 'success');
       info.innerHTML = `<span style="color:var(--green)">\u2705 \u0e2d\u0e31\u0e1e\u0e42\u0e2b\u0e25\u0e14 ${written.toLocaleString()} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e41\u0e25\u0e49\u0e27 \u2014 \u0e44\u0e1b\u0e14\u0e39\u0e43\u0e19\u0e2b\u0e19\u0e49\u0e32\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14\u0e44\u0e14\u0e49\u0e40\u0e25\u0e22</span>`;
       boLog('\U0001f525 DB.xlsx Firestore: ' + written + ' rows (' + file.name + ')');
