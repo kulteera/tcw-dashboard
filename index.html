@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="th">
 <head>
@@ -3410,7 +3411,7 @@ async function loadCoreDataFromFirestore() {
   const SHEET1_ID = '1DjGAYB2YcyMq9zAStGPo_gSUpz7n-ah8LhGS4mImhls'; // DB / total
   const SHEET2_ID = '1df_V6sZF6ahmiZ0N3fmdPQPjD2rZrwph';              // Master / รายละเอียด
   const SHEET1_TAB = 'total';
-  const SHEET2_TAB = '\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14';
+  const SHEET2_TAB = 'รายละเอียด';
 
   // Show loading overlay
   let overlay = document.getElementById('data-loading-overlay');
@@ -3445,7 +3446,9 @@ async function loadCoreDataFromFirestore() {
     const res = await fetch(url);
     const text = await res.text();
     // gviz returns: google.visualization.Query.setResponse({...})
-    const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/)[1]);
+    const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/);
+    if(!match) throw new Error('Sheet \u0e44\u0e21\u0e48\u0e1e\u0e1a \u2014 \u0e15\u0e23\u0e27\u0e08\u0e2a\u0e2d\u0e1a\u0e0a\u0e37\u0e48\u0e2d tab \u0e41\u0e25\u0e30\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e34\u0e14 Public');
+    const json = JSON.parse(match[1]);
     const cols = json.table.cols.map(c => c.label || c.id);
     const rows = json.table.rows.map(row => {
       const obj = {};
