@@ -3403,76 +3403,180 @@ window.fireUploadReport = async function(e) {
 // Called once after login — replaces embedded JSON
 // ============================================================
 async function loadCoreDataFromFirestore() {
+  // ════════════════════════════════════════════
+  // โหลดข้อมูลจาก Google Sheets (ฟรี ไม่มี quota)
+  // Sheet 1: DB / ข้อมูลร้านค้า (total tab)
+  // Sheet 2: Master / รายละเอียดสัญญา (รายละเอียด tab)
+  // ════════════════════════════════════════════
+  const SHEET1_ID = '1DjGAYB2YcyMq9zAStGPo_gSUpz7n-ah8LhGS4mImhls'; // DB / total
+  const SHEET2_ID = '1df_V6sZF6ahmiZ0N3fmdPQPjD2rZrwph';              // Master / รายละเอียด
+  const SHEET1_TAB = 'total';
+  const SHEET2_TAB = '\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14';
+
   // Show loading overlay
   let overlay = document.getElementById('data-loading-overlay');
   if(!overlay){
     overlay = document.createElement('div');
     overlay.id = 'data-loading-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;color:#fff;font-family:Sarabun,sans-serif';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;color:#fff;font-family:Sarabun,sans-serif';
     overlay.innerHTML = `
-      <div style="font-size:48px;margin-bottom:16px">🔄</div>
-      <div style="font-size:18px;font-weight:700;margin-bottom:8px">โหลดข้อมูล...</div>
-      <div id="data-load-msg" style="font-size:13px;color:#94a3b8;margin-bottom:20px">เชื่อมต่อ Firestore</div>
-      <div style="width:280px;height:6px;background:#1e293b;border-radius:4px;overflow:hidden">
-        <div id="data-load-bar" style="height:100%;background:linear-gradient(90deg,#3b82f6,#6366f1);border-radius:4px;width:0%;transition:width .3s"></div>
-      </div>`;
+      <div style="font-size:48px;margin-bottom:16px">\U0001f504</div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:8px">\u0e42\u0e2b\u0e25\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25...</div>
+      <div id="data-load-msg" style="font-size:13px;color:#94a3b8;margin-bottom:20px">\u0e40\u0e0a\u0e37\u0e48\u0e2d\u0e21\u0e15\u0e48\u0e2d Google Sheets</div>
+      <div style="width:300px;height:6px;background:#1e293b;border-radius:4px;overflow:hidden">
+        <div id="data-load-bar" style="height:100%;background:linear-gradient(90deg,#22c55e,#16a34a);border-radius:4px;width:0%;transition:width .4s"></div>
+      </div>
+      <div id="data-load-count" style="font-size:12px;color:#64748b;margin-top:10px"></div>`;
     document.body.appendChild(overlay);
   }
   overlay.style.display = 'flex';
 
-  const setMsg = (msg, pct) => {
+  const setMsg = (msg, pct, count) => {
     const el = document.getElementById('data-load-msg');
     const bar = document.getElementById('data-load-bar');
+    const cnt = document.getElementById('data-load-count');
     if(el) el.textContent = msg;
     if(bar) bar.style.width = pct + '%';
+    if(cnt && count) cnt.textContent = count;
   };
 
-  try {
-    // Load SHOPS
-    setMsg('โหลดข้อมูลร้านค้า...', 15);
-    const shopsSnap = await getDocs(collection(db, 'shops'));
-    shopsSnap.docs.forEach(d => { const r = d.data(); SHOPS.push(r); SHOP_MAP[r.cust] = r; });
-
-    // Load MAIN (summary shop list)
-    setMsg('โหลดรายชื่อร้านค้า...', 35);
-    const mainSnap = await getDocs(collection(db, 'main_data'));
-    mainSnap.docs.forEach(d => MAIN.push(d.data()));
-
-    // If main_data empty, build from SHOPS
-    if(!MAIN.length && SHOPS.length) {
-      SHOPS.forEach(s => MAIN.push(s));
-    }
-
-    // Load DETAIL (sales detail per contract/yr)
-    setMsg('โหลดรายละเอียดสัญญา... (อาจใช้เวลาสักครู่)', 55);
-    const detailSnap = await getDocs(collection(db, 'master_data'));
-    detailSnap.docs.forEach(d => {
-      const r = d.data();
-      DETAIL.push(r);
-      const key = r.cust || r.cust_code;
-      if(key){ if(!D[key]) D[key]=[]; D[key].push(r); }
+  // Helper: fetch Google Sheets as JSON via gviz API (no API key needed)
+  async function fetchSheet(sheetId, tabName) {
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tabName)}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    // gviz returns: google.visualization.Query.setResponse({...})
+    const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/)[1]);
+    const cols = json.table.cols.map(c => c.label || c.id);
+    const rows = json.table.rows.map(row => {
+      const obj = {};
+      row.c.forEach((cell, i) => {
+        let val = cell ? cell.v : null;
+        // Convert gviz Date format: Date(2025,0,1) -> 2025-01-01
+        if(typeof val === 'string' && val.startsWith('Date(')) {
+          const parts = val.replace('Date(','').replace(')','').split(',');
+          const y = parseInt(parts[0]);
+          const m = String(parseInt(parts[1])+1).padStart(2,'0');
+          const d = String(parseInt(parts[2]||1)).padStart(2,'0');
+          val = `${y}-${m}-${d}`;
+        }
+        obj[cols[i]] = val;
+      });
+      return obj;
     });
+    return rows;
+  }
 
-    setMsg('เสร็จแล้ว!', 100);
+  // Column mapper: Thai/English -> dashboard fields
+  const COL_MAP = {
+    'Customer':'cust','NAME':'name','Sold-to name':'name',
+    'Sales District Description':'grp','SMName':'sm',
+    '\u0e40\u0e25\u0e02\u0e17\u0e35\u0e48\u0e2a\u0e31\u0e0d\u0e0d\u0e32':'contract_no',
+    'Mec/ Asset No':'mec',
+    '\u0e23\u0e38\u0e48\u0e19\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e1c\u0e2a\u0e21\u0e2a\u0e35':'model',
+    'Material no':'model',
+    '\u0e1b\u0e23\u0e30\u0e40\u0e20\u0e17\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e1c\u0e2a\u0e21\u0e2a\u0e35':'type',
+    '\u0e1b\u0e35\u0e17\u0e35\u0e48\u0e25\u0e07\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07':'year',
+    '\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e40\u0e1b\u0e49\u0e32':'status',
+    '\u0e04\u0e37\u0e19\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07':'returned_year',
+    '\u0e1c\u0e25\u0e1b\u0e23\u0e30\u0e42\u0e22\u0e0a\u0e19\u0e4c':'benefit',
+    'valid from':'inv_start','valid to':'inv_end',
+    'CN':'agreement','SalesGrp':'sg',
+    'Sales District':'sales_district',
+    'SalesOff':'sales_office','Buying':'buying',
+    // direct fields
+    'cust':'cust','name':'name','grp':'grp','sm':'sm',
+    'contract_no':'contract_no','mec':'mec','model':'model',
+    'type':'type','year':'year','status':'status',
+    'returned_year':'returned_year','benefit':'benefit',
+    'inv_start':'inv_start','inv_end':'inv_end','agreement':'agreement',
+    // Master data fields
+    'Agreement':'agreement','contract':'contract','yr':'yr',
+    'target':'target','inv_start':'inv_start','inv_end':'inv_end',
+    'cust_code':'cust','sales':'sales','amt':'amt','ach':'ach',
+  };
 
-    // Apply any manual sales updates
+  function mapRow(row) {
+    const out = {};
+    for(const [k, v] of Object.entries(row)) {
+      const f = COL_MAP[k];
+      if(!f) { out[k] = v; continue; } // keep unknown cols too
+      if(['benefit','target','sales','amt','ach','machine_price'].includes(f)){
+        out[f] = parseFloat(v) || 0;
+      } else {
+        const s = v != null ? String(v).trim() : '';
+        out[f] = (s === '#N/A' || s === 'None' || s === 'null') ? '' : s;
+      }
+    }
+    return out;
+  }
+
+  try {
+    // ── Load Sheet 1: DB / ร้านค้า (total tab) ──
+    setMsg('\u0e42\u0e2b\u0e25\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e23\u0e49\u0e32\u0e19\u0e04\u0e49\u0e32 / \u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07...', 20);
+    const sheet1Rows = await fetchSheet(SHEET1_ID, SHEET1_TAB);
+    const validShops = sheet1Rows
+      .map(mapRow)
+      .filter(r => r.cust && r.cust !== '' && r.cust !== '#N/A');
+
+    validShops.forEach(r => {
+      SHOPS.push(r);
+      SHOP_MAP[r.cust] = r;
+      MAIN.push(r);
+    });
+    setMsg(`\u0e42\u0e2b\u0e25\u0e14\u0e23\u0e49\u0e32\u0e19\u0e04\u0e49\u0e32\u0e40\u0e2a\u0e23\u0e47\u0e08: ${validShops.length.toLocaleString()} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23`, 50, `\u2705 \u0e23\u0e49\u0e32\u0e19\u0e04\u0e49\u0e32 ${validShops.length.toLocaleString()} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23`);
+
+    // ── Load Sheet 2: Master / รายละเอียดสัญญา ──
+    setMsg('\u0e42\u0e2b\u0e25\u0e14\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14\u0e2a\u0e31\u0e0d\u0e0d\u0e32...', 70);
+    const sheet2Rows = await fetchSheet(SHEET2_ID, SHEET2_TAB);
+    const validDetail = sheet2Rows
+      .map(mapRow)
+      .filter(r => (r.cust || r.cust_code) && r.cust !== '#N/A');
+
+    validDetail.forEach(r => {
+      const key = r.cust || r.cust_code;
+      if(!key) return;
+      DETAIL.push(r);
+      if(!D[key]) D[key] = [];
+      D[key].push(r);
+    });
+    setMsg(`\u0e42\u0e2b\u0e25\u0e14\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14\u0e40\u0e2a\u0e23\u0e47\u0e08: ${validDetail.length.toLocaleString()} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23`, 90,
+      `\u2705 \u0e23\u0e49\u0e32\u0e19\u0e04\u0e49\u0e32 ${validShops.length.toLocaleString()} | \u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14 ${validDetail.length.toLocaleString()}`);
+
+    // Apply any manual sales updates from Firestore
     if(boSalesData && boSalesData.length) applyManualSalesToDWithRetry(boSalesData);
 
-    // Brief pause then hide overlay
+    setMsg('\u0e40\u0e2a\u0e23\u0e47\u0e08\u0e41\u0e25\u0e49\u0e27!', 100);
     await new Promise(r => setTimeout(r, 400));
     overlay.style.display = 'none';
 
-    // Render main UI
+    // Render UI
     if(typeof renderShopTable === 'function' && SHOPS.length) renderShopTable(SHOPS);
     if(typeof renderMain === 'function' && MAIN.length) renderMain(MAIN);
 
-    boLog('✅ Core data loaded: SHOPS=' + SHOPS.length + ' MAIN=' + MAIN.length + ' DETAIL=' + DETAIL.length);
+    boLog('\u2705 Google Sheets loaded: SHOPS=' + SHOPS.length + ' DETAIL=' + DETAIL.length);
 
   } catch(err) {
-    setMsg('❌ โหลดไม่สำเร็จ: ' + err.message, 0);
-    console.error('loadCoreDataFromFirestore error:', err);
-    // Hide after 5s even on error
-    setTimeout(() => { overlay.style.display = 'none'; }, 5000);
+    console.error('loadCoreData error:', err);
+    setMsg('\u274c \u0e42\u0e2b\u0e25\u0e14\u0e44\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08: ' + err.message, 0);
+
+    // Fallback: try loading from Firestore
+    boLog('\u26a0\ufe0f Google Sheets \u0e44\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08 \u2014 \u0e25\u0e2d\u0e07\u0e42\u0e2b\u0e25\u0e14\u0e08\u0e32\u0e01 Firestore \u0e41\u0e17\u0e19');
+    try {
+      const shopsSnap = await getDocs(collection(db, 'shops'));
+      shopsSnap.docs.forEach(d => { const r=d.data(); SHOPS.push(r); SHOP_MAP[r.cust]=r; MAIN.push(r); });
+      const detailSnap = await getDocs(collection(db, 'master_data'));
+      detailSnap.docs.forEach(d => {
+        const r=d.data(); DETAIL.push(r);
+        const key=r.cust||r.cust_code; if(key){ if(!D[key])D[key]=[]; D[key].push(r); }
+      });
+      boLog('\u2705 Firestore fallback: SHOPS=' + SHOPS.length + ' DETAIL=' + DETAIL.length);
+    } catch(e2) {
+      boLog('\u274c Firestore fallback \u0e01\u0e47\u0e44\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08: ' + e2.message);
+    }
+    await new Promise(r => setTimeout(r, 3000));
+    overlay.style.display = 'none';
+    if(typeof renderShopTable==='function' && SHOPS.length) renderShopTable(SHOPS);
   }
 }
 
